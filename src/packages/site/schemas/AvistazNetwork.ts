@@ -317,11 +317,6 @@ export const SchemaMetadata: Pick<
 };
 
 export default class AvistazNetwork extends PrivateSite {
-  /*
-    应站点要求，不启用用户数据获取
-    > User information will never be available in any form or API, as we respect the privacy and confidentiality of user information.
-    @refs: https://github.com/pt-plugins/PT-Plugin-Plus/issues/996#issuecomment-1057856310
-  */
   public override async getUserInfoResult(lastUserInfo: Partial<IUserInfo> = {}): Promise<IUserInfo> {
     let flushUserInfo: IUserInfo = {
       status: EResultParseStatus.unknownError,
@@ -329,51 +324,42 @@ export default class AvistazNetwork extends PrivateSite {
       site: this.metadata.id,
     };
 
-    flushUserInfo = {
-      ...flushUserInfo,
-      status: EResultParseStatus.passParse,
-      name: this.userConfig.inputSetting?.username,
-      levelName: "应站点要求，不启用用户数据获取",
-    };
-
-    /* 预留获取用户信息
     if (!this.allowQueryUserInfo) {
       flushUserInfo.status = EResultParseStatus.passParse;
       return flushUserInfo;
     }
 
-      // 对 AvistazNetwork，如果定义了 process，则按照 AbstractPrivateSite 的方式处理
-      if (Array.isArray(this.metadata.userInfo?.process)) {
-        return await super.getUserInfoResult(lastUserInfo);
+    // 对 AvistazNetwork，如果定义了 process，则按照 AbstractPrivateSite 的方式处理
+    if (Array.isArray(this.metadata.userInfo?.process)) {
+      return await super.getUserInfoResult(lastUserInfo);
+    }
+
+    try {
+      flushUserInfo = { ...flushUserInfo, ...(await this.getBaseInfoFromSite()) };
+      if (flushUserInfo.name) {
+        flushUserInfo = {
+          ...flushUserInfo,
+          ...(await this.getExtendInfoFromProfile(flushUserInfo.name as string)),
+          ...(await this.getUserSeedingTorrents(flushUserInfo.name as string)),
+        };
+      } else {
+        flushUserInfo.name = this.userConfig.inputSetting?.username;
+        flushUserInfo = {
+          ...flushUserInfo,
+          ...(await this.getExtendInfoFromProfile(flushUserInfo.name as string)),
+          ...(await this.getUserSeedingTorrents(flushUserInfo.name as string)),
+        };
       }
 
-      try {
-        flushUserInfo = { ...flushUserInfo, ...(await this.getBaseInfoFromSite()) };
-        if (flushUserInfo.name) {
-          flushUserInfo = {
-            ...flushUserInfo,
-            ...(await this.getExtendInfoFromProfile(flushUserInfo.name as string)),
-            ...(await this.getUserSeedingTorrents(flushUserInfo.name as string)),
-          };
-        }
-        else {
-          flushUserInfo.name = this.userConfig.inputSetting?.username;
-          flushUserInfo = {
-            ...flushUserInfo,
-            ...(await this.getExtendInfoFromProfile(flushUserInfo.name as string)),
-            ...(await this.getUserSeedingTorrents(flushUserInfo.name as string)),
-          };
-        }
-
-        if (this.metadata.levelRequirements && flushUserInfo.levelName && typeof flushUserInfo.levelId === "undefined") {
-          flushUserInfo.levelId = this.guessUserLevelId(flushUserInfo as IUserInfo);
-        }
-
-        flushUserInfo.status = EResultParseStatus.success;
-      } catch (error) {
-        flushUserInfo.status = EResultParseStatus.parseError;
+      if (this.metadata.levelRequirements && flushUserInfo.levelName && typeof flushUserInfo.levelId === "undefined") {
+        flushUserInfo.levelId = this.guessUserLevelId(flushUserInfo as IUserInfo);
       }
-    */
+
+      flushUserInfo.status = EResultParseStatus.success;
+    } catch (error) {
+      flushUserInfo.status = EResultParseStatus.parseError;
+    }
+
     return flushUserInfo;
   }
 
