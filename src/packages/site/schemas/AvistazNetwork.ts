@@ -54,6 +54,77 @@ const commonListSelectors: TSchemaMetadataListSelectors = {
   category: { selector: "i[data-original-title]", attr: "data-original-title" },
 };
 
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function getText(element?: Element | null): string {
+  return element ? normalizeText((element as HTMLElement).innerText ?? element.textContent ?? "") : "";
+}
+
+function getOwnText(element?: Element | null): string {
+  if (!element) return "";
+  return normalizeText(
+    Array.from(element.childNodes)
+      .filter((node) => node.nodeType === 3)
+      .map((node) => node.textContent ?? "")
+      .join(" "),
+  );
+}
+
+function getProfileTableValue(document: Document, label: string): string {
+  const labelPattern = new RegExp(`^${label}$`, "i");
+  for (const row of Sizzle("table tr", document)) {
+    const cells = Array.from(row.children);
+    if (cells.length < 2) continue;
+
+    const rowLabel = getText(cells[0]).replace(/^[^A-Za-z]+/, "");
+    if (labelPattern.test(rowLabel)) {
+      return getOwnText(cells[1]) || getText(cells[1]);
+    }
+  }
+  return "";
+}
+
+function getProfileCounterValue(document: Document, labels: string[]): string {
+  const escapedLabels = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const labelPattern = new RegExp(`(?:${escapedLabels.join("|")})`, "i");
+  for (const item of Sizzle(".card .tag, .well li", document)) {
+    const text = getText(item);
+    if (labelPattern.test(text)) {
+      return text;
+    }
+  }
+  return "";
+}
+
+function getRatioBarValue(document: Document, label: string): string {
+  const titledElement = Sizzle(`.ratio-bar [title='${label}']`, document)[0];
+  if (titledElement) {
+    return getText(titledElement);
+  }
+
+  const labelPattern = new RegExp(`\\b${label}\\s*:`, "i");
+  for (const item of Sizzle(".ratio-bar li, .ratio-bar .d-inline-block", document)) {
+    const text = getText(item);
+    if (labelPattern.test(text)) {
+      return text;
+    }
+  }
+  return "";
+}
+
+async function mergeUserInfo<T extends Partial<IUserInfo>>(
+  userInfo: IUserInfo,
+  parseAction: () => Promise<T>,
+): Promise<IUserInfo> {
+  try {
+    return { ...userInfo, ...(await parseAction()) };
+  } catch (error) {
+    return userInfo;
+  }
+}
+
 export const avzNetDiscountMap: Record<number, string> = {
   1: "Free-Download",
   2: "Half-Download",
@@ -263,32 +334,93 @@ export const SchemaMetadata: Pick<
   userInfo: {
     pickLast: ["name"],
     selectors: {
-      name: { selector: ["span.user-group.group-member"] },
-      levelName: { selector: ["body > header > div.ratio-bar.mb-1.pt-2.pl-2.pb-1 > div > div:nth-child(2)"] },
+      name: {
+        selector: ":self",
+        elementProcess: (document: Document) =>
+          getProfileTableValue(document, "Username") ||
+          getText(
+            Sizzle(
+              ".ratio-bar a[href*='/profile/'] .user-group, .ratio-bar a[href*='/profile/'] .badge-user",
+              document,
+            )[0],
+          ),
+      },
+      levelName: {
+        selector: ":self",
+        elementProcess: (document: Document) =>
+          getProfileTableValue(document, "Rank") ||
+          getText(
+            Sizzle(
+              ".ratio-bar .container > div:nth-child(2) .user-group, .ratio-bar li:nth-child(2) .badge-user",
+              document,
+            )[0],
+          ),
+      },
       uploaded: {
-        selector: ["body > header > div.ratio-bar.mb-1.pt-2.pl-2.pb-1 > div > div:nth-child(3)"],
+        selector: ":self",
+        elementProcess: (document: Document) =>
+          getProfileTableValue(document, "Uploaded") || getRatioBarValue(document, "Upload"),
         filters: [{ name: "parseSize" }],
       },
       downloaded: {
-        selector: ["body > header > div.ratio-bar.mb-1.pt-2.pl-2.pb-1 > div > div:nth-child(4)"],
+        selector: ":self",
+        elementProcess: (document: Document) =>
+          getProfileTableValue(document, "Downloaded") || getRatioBarValue(document, "Download"),
         filters: [{ name: "parseSize" }],
       },
       ratio: {
-        selector: ["body > header > div.ratio-bar.mb-1.pt-2.pl-2.pb-1 > div > div:nth-child(5)"],
+        selector: ":self",
+        elementProcess: (document: Document) =>
+          getProfileTableValue(document, "Ratio") || getRatioBarValue(document, "Ratio"),
         filters: [{ name: "parseNumber" }],
       },
       bonus: {
-        selector: ["body > header > div.ratio-bar.mb-1.pt-2.pl-2.pb-1 > div > div:nth-child(9)"],
+        selector: ":self",
+        elementProcess: (document: Document) =>
+          getProfileTableValue(document, "Bonus Points") || getRatioBarValue(document, "Bonus"),
         filters: [{ name: "parseNumber" }],
       },
       joinTime: {
-        selector: ["table.table-striped tr:contains('Joined') td:last-child"],
-        filters: [{ name: "parseTime", args: ["dd MMMM yyyy hh:mm a"] }],
+        selector: ":self",
+        elementProcess: (document: Document) => getProfileTableValue(document, "Joined"),
+        filters: [
+          (value: string) => value.split("(")[0].trim(),
+          { name: "parseTime", args: ["dd MMM yyyy hh:mm a"] },
+        ],
       },
-      uploads: { selector: [".card .tag-green"], filters: [{ name: "parseNumber" }] },
-      snatches: { selector: [".card .tag-yellow"], filters: [{ name: "parseNumber" }] },
-      seeding: { selector: [".card .tag-indigo"], filters: [{ name: "parseNumber" }] },
-      hnrUnsatisfied: { selector: [".card .tag-red"], filters: [{ name: "parseNumber" }] },
+      lastAccessAt: {
+        selector: ":self",
+        elementProcess: (document: Document) => getProfileTableValue(document, "Last Access"),
+        filters: [
+          (value: string) => value.split("(")[0].trim(),
+          { name: "parseTime", args: ["dd MMM yyyy hh:mm a"] },
+        ],
+      },
+      uploads: {
+        selector: ":self",
+        elementProcess: (document: Document) => getProfileCounterValue(document, ["Uploads", "Total Uploads"]),
+        filters: [{ name: "parseNumber" }],
+      },
+      snatches: {
+        selector: ":self",
+        elementProcess: (document: Document) => getProfileCounterValue(document, ["Downloads"]),
+        filters: [{ name: "parseNumber" }],
+      },
+      seeding: {
+        selector: ":self",
+        elementProcess: (document: Document) => getProfileCounterValue(document, ["Seeds", "Seeding"]),
+        filters: [{ name: "parseNumber" }],
+      },
+      leeching: {
+        selector: ":self",
+        elementProcess: (document: Document) => getProfileCounterValue(document, ["Leeching", "Peers"]),
+        filters: [{ name: "parseNumber" }],
+      },
+      hnrUnsatisfied: {
+        selector: ":self",
+        elementProcess: (document: Document) => getProfileCounterValue(document, ["Hit & Run"]),
+        filters: [{ name: "parseNumber" }],
+      },
     },
   },
 
@@ -334,31 +466,24 @@ export default class AvistazNetwork extends PrivateSite {
       return await super.getUserInfoResult(lastUserInfo);
     }
 
-    try {
-      flushUserInfo = { ...flushUserInfo, ...(await this.getBaseInfoFromSite()) };
-      if (flushUserInfo.name) {
-        flushUserInfo = {
-          ...flushUserInfo,
-          ...(await this.getExtendInfoFromProfile(flushUserInfo.name as string)),
-          ...(await this.getUserSeedingTorrents(flushUserInfo.name as string)),
-        };
-      } else {
-        flushUserInfo.name = this.userConfig.inputSetting?.username;
-        flushUserInfo = {
-          ...flushUserInfo,
-          ...(await this.getExtendInfoFromProfile(flushUserInfo.name as string)),
-          ...(await this.getUserSeedingTorrents(flushUserInfo.name as string)),
-        };
-      }
+    flushUserInfo = await mergeUserInfo(flushUserInfo, () => this.getBaseInfoFromSite());
+    flushUserInfo.name ||= this.userConfig.inputSetting?.username;
 
-      if (this.metadata.levelRequirements && flushUserInfo.levelName && typeof flushUserInfo.levelId === "undefined") {
-        flushUserInfo.levelId = this.guessUserLevelId(flushUserInfo as IUserInfo);
-      }
-
-      flushUserInfo.status = EResultParseStatus.success;
-    } catch (error) {
-      flushUserInfo.status = EResultParseStatus.parseError;
+    if (flushUserInfo.name) {
+      flushUserInfo = await mergeUserInfo(flushUserInfo, () =>
+        this.getExtendInfoFromProfile(flushUserInfo.name as string),
+      );
+      flushUserInfo = await mergeUserInfo(flushUserInfo, () =>
+        this.getUserSeedingTorrents(flushUserInfo.name as string),
+      );
     }
+
+    if (this.metadata.levelRequirements && flushUserInfo.levelName && typeof flushUserInfo.levelId === "undefined") {
+      flushUserInfo.levelId = this.guessUserLevelId(flushUserInfo as IUserInfo);
+    }
+
+    flushUserInfo.status =
+      flushUserInfo.name || flushUserInfo.levelName ? EResultParseStatus.success : EResultParseStatus.parseError;
 
     return flushUserInfo;
   }
@@ -366,7 +491,7 @@ export default class AvistazNetwork extends PrivateSite {
   protected async getBaseInfoFromSite(): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const { data: pageDocument } = await this.request<Document>({
-      url: "/",
+      url: urlJoin("/profile", this.userConfig.inputSetting?.username ?? ""),
       responseType: "document",
     });
 
@@ -389,9 +514,11 @@ export default class AvistazNetwork extends PrivateSite {
 
     return this.getFieldsData(pageDocument, this.metadata.userInfo?.selectors!, [
       "joinTime",
+      "lastAccessAt",
       "uploads",
       "snatches",
       "seeding",
+      "leeching",
       "hnrUnsatisfied",
     ]) as Partial<IUserInfo>;
   }
@@ -400,14 +527,18 @@ export default class AvistazNetwork extends PrivateSite {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const userSeedingTorrent: Partial<IUserInfo> = { seedingSize: 0 };
 
-    const { data: seedPage } = await this.request<Document>({
-      url: urlJoin("/profile", userName) + "/active",
-      responseType: "document",
-    });
-    const rows = Sizzle("table .text-yellow", seedPage);
-    rows.forEach((element) => {
-      userSeedingTorrent.seedingSize! += parseSizeString((element as HTMLElement).innerText.trim());
-    });
+    try {
+      const { data: seedPage } = await this.request<Document>({
+        url: urlJoin("/profile", userName) + "/active",
+        responseType: "document",
+      });
+      const rows = Sizzle("table .text-yellow", seedPage);
+      rows.forEach((element) => {
+        userSeedingTorrent.seedingSize! += parseSizeString((element as HTMLElement).innerText.trim());
+      });
+    } catch (error) {
+      return {};
+    }
 
     return userSeedingTorrent;
   }
