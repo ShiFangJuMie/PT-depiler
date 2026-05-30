@@ -466,13 +466,37 @@ export default class AvistazNetwork extends PrivateSite {
       return await super.getUserInfoResult(lastUserInfo);
     }
 
-    flushUserInfo = await mergeUserInfo(flushUserInfo, () => this.getBaseInfoFromSite());
-    flushUserInfo.name ||= this.userConfig.inputSetting?.username;
+    const userName = (lastUserInfo.name as string | undefined) || this.userConfig.inputSetting?.username;
+    if (!userName) {
+      flushUserInfo.status = EResultParseStatus.parseError;
+      return flushUserInfo;
+    }
+
+    flushUserInfo = await mergeUserInfo(flushUserInfo, () => this.getBaseInfoFromSite(userName));
+    flushUserInfo.name ||= userName;
 
     if (flushUserInfo.name) {
       flushUserInfo = await mergeUserInfo(flushUserInfo, () =>
         this.getExtendInfoFromProfile(flushUserInfo.name as string),
       );
+    }
+
+    const hasProfileInfo = [
+      "levelName",
+      "uploaded",
+      "downloaded",
+      "ratio",
+      "bonus",
+      "joinTime",
+      "lastAccessAt",
+      "uploads",
+      "snatches",
+      "seeding",
+      "leeching",
+      "hnrUnsatisfied",
+    ].some((key) => typeof flushUserInfo[key] !== "undefined" && flushUserInfo[key] !== "");
+
+    if (hasProfileInfo) {
       flushUserInfo = await mergeUserInfo(flushUserInfo, () =>
         this.getUserSeedingTorrents(flushUserInfo.name as string),
       );
@@ -483,15 +507,17 @@ export default class AvistazNetwork extends PrivateSite {
     }
 
     flushUserInfo.status =
-      flushUserInfo.name || flushUserInfo.levelName ? EResultParseStatus.success : EResultParseStatus.parseError;
+      flushUserInfo.name && hasProfileInfo ? EResultParseStatus.success : EResultParseStatus.parseError;
 
     return flushUserInfo;
   }
 
-  protected async getBaseInfoFromSite(): Promise<Partial<IUserInfo>> {
+  protected async getBaseInfoFromSite(
+    userName: string = this.userConfig.inputSetting?.username ?? "",
+  ): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
     const { data: pageDocument } = await this.request<Document>({
-      url: urlJoin("/profile", this.userConfig.inputSetting?.username ?? ""),
+      url: urlJoin("/profile", userName),
       responseType: "document",
     });
 
