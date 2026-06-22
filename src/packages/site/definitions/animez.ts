@@ -224,9 +224,11 @@ interface IAnimeZRawTorrent extends IAvzNetRawTorrent {
 }
 
 export default class AnimeZ extends AvistazNetwork {
-  protected override async getBaseInfoFromSite(): Promise<Partial<IUserInfo>> {
+  protected override async getBaseInfoFromSite(
+    userName: string = this.userConfig.inputSetting?.username ?? "",
+  ): Promise<Partial<IUserInfo>> {
     const { data: pageDocument } = await this.request<Document>({
-      url: `/profile/${this.userConfig.inputSetting?.username}`,
+      url: `/profile/${userName}`,
       responseType: "document",
     });
 
@@ -254,10 +256,6 @@ export default class AnimeZ extends AvistazNetwork {
       "joinTime",
       "lastAccessAt",
     ]) as Partial<IUserInfo>;
-  }
-
-  protected override async getUserSeedingTorrents(userName: string): Promise<Partial<IUserInfo>> {
-    return {};
   }
 
   protected override parseTorrentRowForTags(

@@ -80,9 +80,74 @@ function getProfileTableValue(document: Document, label: string): string {
 
     const rowLabel = getText(cells[0]).replace(/^[^A-Za-z]+/, "");
     if (labelPattern.test(rowLabel)) {
-      return getOwnText(cells[1]) || getText(cells[1]);
+      const ownText = getOwnText(cells[1]);
+      if (ownText) return ownText;
+
+      const semanticValue = Sizzle(".user-group, .badge-user, .badge, strong, span", cells[1])[0];
+      return getText(semanticValue) || getText(cells[1]);
     }
   }
+  return "";
+}
+
+function getTorrentRowSize(row: Element): number {
+  const selectors = [
+    "span.badge-extra.fa-database",
+    "div.d-block span.text-yellow",
+    "td[data-label='Size']",
+    ".torrent-size",
+    ".text-yellow",
+  ];
+
+  for (const selector of selectors) {
+    const element = Sizzle(selector, row)[0];
+    if (!element) continue;
+
+    const size = parseSizeString(getText(element));
+    if (size > 0) return size;
+  }
+
+  const sizeMatch = getText(row).match(/\d[\d,]*(?:\.\d+)?\s*[ZEPTGMK]i?B\b/i);
+  if (sizeMatch) return parseSizeString(sizeMatch[0]);
+
+  return 0;
+}
+
+function isSeedingTorrentRow(row: Element): boolean {
+  const cells = Array.from(row.children);
+  return cells.some((cell) => /^(?:seed|seeding)$/i.test(getText(cell)));
+}
+
+function getActivePageCount(document: Document): number {
+  return Sizzle("a[href*='page=']", document).reduce((maxPage, link) => {
+    const pageMatch = link.getAttribute("href")?.match(/[?&]page=(\d+)/);
+    return pageMatch ? Math.max(maxPage, Number(pageMatch[1])) : maxPage;
+  }, 1);
+}
+
+function getSeedingSize(document: Document): number {
+  return Sizzle("table tr", document).reduce((total, row) => {
+    if (!isSeedingTorrentRow(row)) return total;
+    return total + getTorrentRowSize(row);
+  }, 0);
+}
+
+function getBonusPerHour(document: Document): string {
+  for (const row of Sizzle("table tr", document)) {
+    const cells = Array.from(row.children);
+    if (cells.length < 2) continue;
+
+    const label = getText(cells[0]);
+    if (/^(?:Total Earnings|Projected Hourly Rate)\b/i.test(label)) {
+      return getText(cells[cells.length - 1]);
+    }
+  }
+
+  for (const heading of Sizzle("h1, h2, h3, h4, h5, h6", document)) {
+    const text = getText(heading);
+    if (/\d[\d,.]*\s*(?:points per hour|BP\/hr)/i.test(text)) return text;
+  }
+
   return "";
 }
 
@@ -380,21 +445,20 @@ export const SchemaMetadata: Pick<
           getProfileTableValue(document, "Bonus Points") || getRatioBarValue(document, "Bonus"),
         filters: [{ name: "parseNumber" }],
       },
+      bonusPerHour: {
+        selector: ":self",
+        elementProcess: getBonusPerHour,
+        filters: [{ name: "parseNumber" }],
+      },
       joinTime: {
         selector: ":self",
         elementProcess: (document: Document) => getProfileTableValue(document, "Joined"),
-        filters: [
-          (value: string) => value.split("(")[0].trim(),
-          { name: "parseTime", args: ["dd MMM yyyy hh:mm a"] },
-        ],
+        filters: [(value: string) => value.split("(")[0].trim(), { name: "parseTime", args: ["dd MMM yyyy hh:mm a"] }],
       },
       lastAccessAt: {
         selector: ":self",
         elementProcess: (document: Document) => getProfileTableValue(document, "Last Access"),
-        filters: [
-          (value: string) => value.split("(")[0].trim(),
-          { name: "parseTime", args: ["dd MMM yyyy hh:mm a"] },
-        ],
+        filters: [(value: string) => value.split("(")[0].trim(), { name: "parseTime", args: ["dd MMM yyyy hh:mm a"] }],
       },
       uploads: {
         selector: ":self",
@@ -500,6 +564,7 @@ export default class AvistazNetwork extends PrivateSite {
       flushUserInfo = await mergeUserInfo(flushUserInfo, () =>
         this.getUserSeedingTorrents(flushUserInfo.name as string),
       );
+      flushUserInfo = await mergeUserInfo(flushUserInfo, () => this.getUserBonusPerHour(flushUserInfo.name as string));
     }
 
     if (this.metadata.levelRequirements && flushUserInfo.levelName && typeof flushUserInfo.levelId === "undefined") {
@@ -551,22 +616,48 @@ export default class AvistazNetwork extends PrivateSite {
 
   protected async getUserSeedingTorrents(userName: string): Promise<Partial<IUserInfo>> {
     await this.sleepAction(this.metadata.userInfo?.requestDelay);
-    const userSeedingTorrent: Partial<IUserInfo> = { seedingSize: 0 };
 
     try {
-      const { data: seedPage } = await this.request<Document>({
-        url: urlJoin("/profile", userName) + "/active",
+      const activePageUrl = urlJoin("/profile", userName, "active");
+      const { data: firstPage } = await this.request<Document>({
+        url: activePageUrl,
         responseType: "document",
       });
-      const rows = Sizzle("table .text-yellow", seedPage);
-      rows.forEach((element) => {
-        userSeedingTorrent.seedingSize! += parseSizeString((element as HTMLElement).innerText.trim());
-      });
+
+      let seedingSize = getSeedingSize(firstPage);
+      const pageCount = Math.min(getActivePageCount(firstPage), 100);
+
+      for (let page = 2; page <= pageCount; page++) {
+        await this.sleepAction(this.metadata.userInfo?.requestDelay);
+        const { data: pageDocument } = await this.request<Document>({
+          url: activePageUrl,
+          params: { page },
+          responseType: "document",
+        });
+        seedingSize += getSeedingSize(pageDocument);
+      }
+
+      return seedingSize > 0 ? { seedingSize } : {};
     } catch (error) {
       return {};
     }
+  }
 
-    return userSeedingTorrent;
+  protected async getUserBonusPerHour(userName: string): Promise<Partial<IUserInfo>> {
+    await this.sleepAction(this.metadata.userInfo?.requestDelay);
+
+    try {
+      const { data: bonusPage } = await this.request<Document>({
+        url: urlJoin("/profile", userName, "bonus"),
+        responseType: "document",
+      });
+      const bonusPerHour = this.getFieldData(bonusPage, this.metadata.userInfo?.selectors?.bonusPerHour!);
+      return typeof bonusPerHour === "number" && Number.isFinite(bonusPerHour) && bonusPerHour >= 0
+        ? { bonusPerHour }
+        : {};
+    } catch (error) {
+      return {};
+    }
   }
 
   public override async request<T>(
