@@ -19,6 +19,8 @@ import {
 } from "../types";
 import { parseSizeString } from "../utils";
 
+const enableAvistazUserInfoFetching = import.meta.env.VITE_ENABLE_AVISTAZ_USER_INFO_FETCHING === "true";
+
 interface AuthSuccessResp {
   token: string;
   expiry: number;
@@ -513,12 +515,26 @@ export const SchemaMetadata: Pick<
 };
 
 export default class AvistazNetwork extends PrivateSite {
+  /*
+    应站点要求，默认不启用用户数据获取。仅供非上游构建显式开启。
+    > User information will never be available in any form or API, as we respect the privacy and confidentiality of user information.
+    @refs: https://github.com/pt-plugins/PT-Plugin-Plus/issues/996#issuecomment-1057856310
+  */
   public override async getUserInfoResult(lastUserInfo: Partial<IUserInfo> = {}): Promise<IUserInfo> {
     let flushUserInfo: IUserInfo = {
       status: EResultParseStatus.unknownError,
       updateAt: +new Date(),
       site: this.metadata.id,
     };
+
+    if (!enableAvistazUserInfoFetching) {
+      return {
+        ...flushUserInfo,
+        status: EResultParseStatus.passParse,
+        name: this.userConfig.inputSetting?.username,
+        levelName: "应站点要求，不启用用户数据获取",
+      };
+    }
 
     if (!this.allowQueryUserInfo) {
       flushUserInfo.status = EResultParseStatus.passParse;
