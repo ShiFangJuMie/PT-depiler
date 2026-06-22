@@ -2,7 +2,7 @@ import { ISearchInput, ISiteMetadata, ITorrent, ITorrentTag, IUserInfo } from ".
 import AvistazNetwork, { SchemaMetadata, IAvzNetRawTorrent } from "../schemas/AvistazNetwork.ts";
 import { definedFilters } from "../utils/filter.ts";
 
-const profileRootSelector = "body > div:first-child > div:nth-child(2) > main > div > div > div:first-child";
+const profileRootSelector = "main > div > div > div:first-child";
 const profileHeaderSelector = `${profileRootSelector} > div > div > div > div`;
 
 function parseAnimeZNumber(value: string): number {
@@ -31,12 +31,6 @@ function getAnimeZDatagridValue(document: Document, label: string): string {
   return "";
 }
 
-function getAnimeZXPathText(document: Document, xpath: string): string {
-  if (typeof document.evaluate !== "function" || typeof XPathResult === "undefined") return "";
-  const node = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-  return node && node.nodeType === 1 ? getText(node as Element) : "";
-}
-
 const formatMap: Record<string, string> = {
   TV: "Anime/TV",
   TV_SHORT: "Anime/TV Short",
@@ -53,7 +47,7 @@ const formatMap: Record<string, string> = {
 export const siteMetadata: ISiteMetadata = {
   ...SchemaMetadata,
 
-  version: 1,
+  version: 3,
   id: "animez",
   name: "AnimeZ",
   aka: ["AnimeTorrents"],
@@ -116,6 +110,7 @@ export const siteMetadata: ISiteMetadata = {
   userInfo: {
     pickLast: ["name"],
     selectors: {
+      ...SchemaMetadata.userInfo!.selectors!,
       name: {
         selector: ":self",
         elementProcess: (document: Document) =>
@@ -125,9 +120,8 @@ export const siteMetadata: ISiteMetadata = {
       levelName: {
         selector: ":self",
         elementProcess: (document: Document) =>
-          getAnimeZXPathText(document, "/html/body/div[1]/div[2]/main/div/div/div[1]/div/div/div/div/div[2]/span") ||
-          getText(document.querySelector(`${profileHeaderSelector} > div:nth-child(2) > span.badge`)) ||
-          getText(document.querySelector(`${profileHeaderSelector} > div:nth-child(2) > span`)),
+          getText(document.querySelector(`${profileHeaderSelector} > div:nth-child(2) > span.badge.badge-sm`)) ||
+          getText(document.querySelector(`${profileHeaderSelector} span.badge.badge-sm`)),
       },
       uploaded: {
         selector: ":self",
@@ -209,6 +203,27 @@ export const siteMetadata: ISiteMetadata = {
       groupType: "vip",
       privilege: "Distinguished member, donator, or retired staff.",
     },
+    {
+      id: 200,
+      name: "Uploader",
+      groupType: "manager",
+      privilege: "Promoted by staff for quality and quantity of uploads. Access to the upload API and tag creation.",
+    },
+    {
+      id: 201,
+      name: "Editor",
+      groupType: "manager",
+      privilege: "Promoted by staff. Can create and edit anime database entries.",
+    },
+    {
+      id: 202,
+      name: "Staff",
+      groupType: "manager",
+      privilege: "Site assistant with access to the admin panel and moderation tools.",
+    },
+    { id: 203, name: "Moderator", groupType: "manager", privilege: "Moderates the site and its users." },
+    { id: 204, name: "Administrator", groupType: "manager", privilege: "Administers and moderates the site." },
+    { id: 205, name: "Super Admin", groupType: "manager", privilege: "Site owner." },
   ],
 };
 
